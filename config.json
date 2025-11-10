@@ -1,0 +1,10 @@
+{
+  "file_name": null,
+  "folder_name": "E:/Tools/PCAnnotator/openGL Annotator",
+  "save_location": "annotations",
+  "num_classes": 5,
+  "class_names": ["Defect", "Long Defect", "Hole", "Scratsh", "Bump"],
+  "class_colors": [[255, 0, 0],[0, 255, 0],[0, 0, 255],[255, 255, 0],[180, 180, 180]],
+  "undo_steps": 1000,
+  "unbrush_class": 4
+}

@@ -1,0 +1,50 @@
+# Point Cloud Files (usually huge)
+*.pcd
+*.ply
+*.bin
+*.las
+*.laz
+
+# Annotation folders and files
+annotations/
+annotations/**
+annotation/
+annotation/**
+
+# Open3D / temporary files
+*.log
+*.tmp
+*.cache
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+venv/
+env/
+.venv/
+ENV/
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build / dist
+build/
+dist/
+*.egg-info/
+
+# Our large data folders (add more if you have them)
+pointclouds/
+data/
+dataset/
+raw/
