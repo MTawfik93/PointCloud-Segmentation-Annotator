@@ -17,7 +17,7 @@ Perfect for defect detection, quality control, and semantic segmentation labelin
 - Fixed 1400×800 window – stable brush zero
 - Supports `.pcd`, `.ply`, intensity maps, and more
 
-## Installation
+# Installation
 
 ```bash
 git clone https://github.com/yourusername/PointCloudAnnotator.git
@@ -25,15 +25,15 @@ cd PointCloudAnnotator
 pip install glfw imgui[glfw] numpy pyrr open3d PyGLM
 ```
 
-# Install dependencies
+## Install dependencies
 ```
 pip install glfw imgui[glfw] numpy pyrr open3d PyGLM
 ```
-# Put your point clouds in
+## Put your point clouds in
 ```
 pointclouds/your_file.pcd
 ```
-# Run
+## Run
 ```
 python main.py
 ```
