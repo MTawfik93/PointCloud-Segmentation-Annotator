@@ -17,24 +17,28 @@ Perfect for defect detection, quality control, and semantic segmentation labelin
 - Fixed 1400×800 window – stable brush zero
 - Supports `.pcd`, `.ply`, intensity maps, and more
 
-## Quick Start
+## Installation
 
 ```bash
-# 1. Clone
 git clone https://github.com/yourusername/PointCloudAnnotator.git
 cd PointCloudAnnotator
-
-# 2. Install dependencies
 pip install glfw imgui[glfw] numpy pyrr open3d PyGLM
+```
 
-# 3. Put your point clouds in
+# Install dependencies
+```
+pip install glfw imgui[glfw] numpy pyrr open3d PyGLM
+```
+# Put your point clouds in
+```
 pointclouds/your_file.pcd
-
-# 4. Run
+```
+# Run
+```
 python main.py
-
-Controls
-
+```
+## Controls
+```
 - Left-click + drag → Paint / Unpaint (when Brush Tool enabled)
 - Mouse wheel → Change brush radius
 - Left-click + drag (Brush OFF) → Orbit
@@ -42,8 +46,9 @@ Controls
 - Left/Right Arrow → Next / Previous file
 - Ctrl+Z / Ctrl+Y → Undo / Redo
 - Save JSON / Export PCD → Buttons in sidebar
-
-Project Structure
+```
+## Project Structure
+```bash
 text├── main.py              # Entry point
 ├── Viewer.py            # Full OpenGL + ImGui viewer
 ├── config.json          # Classes, colors, undo steps
@@ -51,8 +56,10 @@ text├── main.py              # Entry point
 ├── annotations/         # ← auto-saved .json labels
 ├── utilities.py         # Viridis colormap helper
 └── .gitignore           # Keeps repo clean
+```
 
-Config Example (config.json)
+## Config Example (config.json)
+```
 json{
   "folder_name": "pointclouds",
   "save_location": "annotations",
@@ -62,7 +69,7 @@ json{
   "undo_steps": 10,
   "unbrush_class": 4
 }
-
+```
 License
 MIT © 2025
 
