@@ -3,7 +3,7 @@
 **Fast OpenGL-based 3D point cloud annotation tool** for LiDAR datasets.  
 Perfect for defect detection, quality control, and semantic segmentation labeling.
 
-![PointCloud Segmentation in Action](https://imgur.com/a/1CU8LGK)  
+![PointCloud Segmentation in Action](https://i.postimg.cc/Nj78xBK7/Annotated.png)  
 
 ## Features
 - **Real-time brush painting** with adjustable radius (mouse wheel)
