@@ -1,5 +1,9 @@
 # Viewer.py
 import glfw
+import zlib
+import lzf
+import struct
+import open3d as o3d
 from OpenGL.GL import *
 import numpy as np
 from pyrr import Matrix44, matrix44
@@ -67,7 +71,7 @@ class LOD:
         self.current_col = self.full_col[idx]
 
 class PointCloudViewer:
-    def __init__(self, save_location, class_names, class_colors, undo_steps, unbrush_class, pcd_paths):
+    def __init__(self, save_location, class_names, class_colors, undo_steps, unbrush_class, pcd_paths, config):
         self.win = None
         self.width = 1400
         self.height = 800
@@ -106,34 +110,175 @@ class PointCloudViewer:
         self.undo_stack = []  # list of (indices, old_class_dict)
         self.redo_stack = []
 
-    def load_pointcloud(self, path: str):
-        ext = path.lower().split('.')[-1]
-        if ext == 'pcd':
+        # Filteration
+        self.outlier_threshold = config.get("outlier_threshold", 99998.0)
+        self.filter_on_load = config.get("filter_on_load", False)
+        self.filtered_once = False
+
+    def load_binary_compressed_pcd(self,filepath):
+        """
+        Load a binary compressed PCD file with LZF compression.
+        
+        Returns:
+            points: Nx3 array of xyz coordinates (float32)
+            colors: Nx3 array of RGB colors (0-255 uint8)
+        """
+        with open(filepath, 'rb') as f:
+            # Parse header
+            header = {}
+            while True:
+                line = f.readline().decode('ascii').strip()
+                if line.startswith('DATA'):
+                    data_type = line.split()[1]
+                    header['DATA'] = data_type
+                    break
+                if line:
+                    parts = line.split(None, 1)
+                    if len(parts) == 2:
+                        key, value = parts
+                        header[key] = value
+            
+            # Read compressed binary data
+            compressed_data = f.read()
+        
+        num_points = int(header.get('POINTS', 0))
+        print(f"Expected points: {num_points}")
+        
+        # Decompress data
+        compressed_size = struct.unpack('<I', compressed_data[0:4])[0]
+        uncompressed_size = struct.unpack('<I', compressed_data[4:8])[0]
+        
+        print(f"Compressed: {compressed_size} bytes → Uncompressed: {uncompressed_size} bytes")
+        
+        try:
+            
+            binary_data = lzf.decompress(compressed_data[8:8+compressed_size], uncompressed_size)
+            print("Decompressed successfully with LZF")
+        except ImportError:
+            raise ImportError("python-lzf not installed. Install with: pip install python-lzf")
+        except Exception as e:
+            raise RuntimeError(f"Decompression error: {e}")
+        
+        # Calculate field sizes (x, y, z, variance, intensity, offset)
+        field_sizes = {
+            'x': num_points * 4,
+            'y': num_points * 4,
+            'z': num_points * 4,
+            'variance': num_points * 4,
+            'intensity': num_points * 2,
+            'offset': num_points * 2
+        }
+        
+        # Parse field-by-field
+        offset_pos = 0
+        x_data = np.frombuffer(binary_data[offset_pos:offset_pos+field_sizes['x']], dtype='<f4')
+        offset_pos += field_sizes['x']
+        
+        y_data = np.frombuffer(binary_data[offset_pos:offset_pos+field_sizes['y']], dtype='<f4')
+        offset_pos += field_sizes['y']
+        
+        z_data = np.frombuffer(binary_data[offset_pos:offset_pos+field_sizes['z']], dtype='<f4')
+        offset_pos += field_sizes['z']
+        
+        variance = np.frombuffer(binary_data[offset_pos:offset_pos+field_sizes['variance']], dtype='<f4')
+        offset_pos += field_sizes['variance']
+        
+        intensity = np.frombuffer(binary_data[offset_pos:offset_pos+field_sizes['intensity']], dtype='<u2')
+
+        offset_data = np.frombuffer(binary_data[offset_pos:offset_pos+field_sizes['offset']], dtype='<u2')
+        
+        # Stack into Nx3 array
+        points = np.stack([x_data, y_data, z_data], axis=1)
+        
+        # Remove NaN and outlier points
+        valid_mask = ~np.isnan(points).any(axis=1) & ~np.isnan(intensity)
+        outlier_mask = (np.abs(points[:, 0]) <= 99999) & \
+                    (np.abs(points[:, 1]) <= 99999) & \
+                    (np.abs(points[:, 2]) <= 99999)
+        
+        combined_mask = valid_mask & outlier_mask
+        points = points[combined_mask]
+        intensity = intensity[combined_mask]
+        
+        print(f"After filtering: {len(points)} points remain")
+        # print(f"\nIntensity statistics:")
+        # print(f"Min: {intensity.min()}, Max: {intensity.max()}")
+        # print(f"Mean: {intensity.mean():.2f}, Std: {intensity.std():.2f}")
+        # print(f"Data type: {intensity.dtype}")
+        # print(f"Sample values: {intensity[:10]}")
+        # Convert intensity to grayscale colors (0-255 range)
+        if intensity.max() > 0:
+            print("Converting intensity to grayscale colors")
+            colors = (intensity.astype(np.float64) / intensity.max() * 255.0).astype(np.uint8)
+        else:
+            colors = intensity.astype(np.uint8) / 255.0
+        
+        colors = np.stack([colors, colors, colors], axis=1)
+        
+        return points, colors
+
+    def load_standard_pcd(self, path: str):
+        """
+        Load a standard PCD file using Open3D.
+        
+        Returns:
+            points: Nx3 array of xyz coordinates (float32)
+            colors: Nx3 array of RGB colors (0-1 float32 range)
+        """
+        try:
             o3d = try_import_open3d()
             pc = o3d.io.read_point_cloud(path)
-            if pc.is_empty(): raise ValueError("PCD empty")
+            
+            if pc.is_empty():
+                raise ValueError("PCD file is empty")
+            
             points = np.asarray(pc.points, dtype=np.float32)
-            colors = np.asarray(pc.colors, dtype=np.float32) if pc.has_colors() else None
-        else:
-            with open(path, 'r') as f: first = f.readline().strip().lower()
-            skip = 1 if any(h in first for h in ['x','y','z']) else 0
-            data = np.genfromtxt(path, delimiter=None, dtype=np.float32,
-                                 ndmin=2, skip_header=skip, invalid_raise=False)
-            if data.shape[0] == 0: raise ValueError("No data")
-            points = data[:, :3].astype(np.float32)
-            if data.shape[1] == 4:
-                i = data[:, 3]
-                i = (i - i.min()) / (i.max() - i.min() + 1e-8)
-                colors = np.repeat(i.reshape(-1,1), 3, axis=1)
-            elif data.shape[1] >= 6:
-                colors = data[:, 3:6].astype(np.float32)
-                if colors.max() > 1.0: colors /= 255.0
-                np.clip(colors, 0, 1, out=colors)
+            
+            if pc.has_colors():
+                colors = np.asarray(pc.colors, dtype=np.float32)
+                print(f"Open3D loaded {len(points)} points with colors")
             else:
-                colors = None
-        if colors is None:
-            colors = np.random.rand(points.shape[0], 3).astype(np.float32)
-        return points, colors
+                # Fallback: medium gray
+                colors = np.ones((len(points), 3), dtype=np.float32) * 0.7
+                print(f"Open3D loaded {len(points)} points (no color data, using gray)")
+            
+            return points, colors
+            
+        except Exception as e:
+            raise RuntimeError(f"Open3D failed to load PCD: {e}")
+    def load_pointcloud(self, path: str):
+        """
+        Load a PCD file, automatically handling binary_compressed or standard formats.
+        
+        Args:
+            path: Path to the PCD file
+            
+        Returns:
+            points: Nx3 array of xyz coordinates
+            colors: Nx3 array of RGB colors (0-255 range for binary_compressed, 0-1 range for standard)
+        """
+        # First, check if it's binary_compressed by reading the header
+        with open(path, 'rb') as f:
+            header = {}
+            while True:
+                line = f.readline().decode('ascii').strip()
+                if line.startswith('DATA'):
+                    data_type = line.split()[1]
+                    header['DATA'] = data_type
+                    break
+                if line:
+                    parts = line.split(None, 1)
+                    if len(parts) == 2:
+                        key, value = parts
+                        header[key] = value
+        
+        # Route to appropriate loader
+        if header.get('DATA') == 'binary_compressed':
+            print("Detected binary_compressed format, using custom loader...")
+            return self.load_binary_compressed_pcd(path)
+        else:
+            print("Detected standard PCD format, using Open3D loader...")
+            return self.load_standard_pcd(path)
 
     def init_gl(self):
         if not glfw.init(): raise RuntimeError("GLFW init failed")
@@ -318,9 +463,24 @@ class PointCloudViewer:
         path = self.pcd_paths[self.current_file_idx]
         print(f"Loading: {path}")
         pts, cols = self.load_pointcloud(path)
-        is_intensity = cols.shape[1] == 3 and np.allclose(cols[:,0], cols[:,1]) and np.allclose(cols[:,1], cols[:,2])
-        if is_intensity:
-            cols = apply_viridis(cols[:, 0])
+        
+        # Track if this is binary compressed format
+        is_binary_compressed = cols.dtype == np.uint8
+        
+        # Normalize colors to 0-1 range if needed
+        if is_binary_compressed:
+            # Binary compressed format returns 0-255 uint8
+            cols = cols.astype(np.float32) / 255.0
+            print("Binary compressed: using intensity as grayscale")
+        else:
+            # Standard PCD: check if colors are grayscale (intensity data)
+            is_intensity = cols.shape[1] == 3 and np.allclose(cols[:,0], cols[:,1]) and np.allclose(cols[:,1], cols[:,2])
+            
+            if is_intensity:
+                # Apply viridis colormap to intensity values
+                cols = apply_viridis(cols[:, 0])
+                print("Applied viridis colormap to intensity data")
+        
         self.lod = LOD(pts, cols)
         self.original_colors = cols.copy()
         center = pts.mean(axis=0)
@@ -331,20 +491,69 @@ class PointCloudViewer:
         width, height = glfw.get_window_size(self.win)
         self.proj = Matrix44.perspective_projection(45, width/height, 0.01, radius * 20)
         self.update_projection()
+        
+        # Auto-filter on load?
+        if self.filter_on_load and not self.filtered_once:
+            self.filter_outliers()
+        else:
+            self.filtered_once = False
+        
         self.annotations = {}
         self.undo_stack = []
         self.redo_stack = []
         self.update_colors()
         self.upload_colors()
+        
         glBindBuffer(GL_ARRAY_BUFFER, self.vbo_pos)
         glBufferData(GL_ARRAY_BUFFER, self.lod.current_pts.nbytes, self.lod.current_pts, GL_STATIC_DRAW)
         glBindBuffer(GL_ARRAY_BUFFER, self.vbo_col)
         glBufferData(GL_ARRAY_BUFFER, self.lod.current_col.nbytes, self.lod.current_col, GL_STATIC_DRAW)
-
     def update_projection(self):
         width, height = glfw.get_window_size(self.win)
         if height == 0: height = 1
         self.proj = Matrix44.perspective_projection(45, width/height, 0.01, self.lod_radius * 20)
+
+    def filter_outliers(self):
+        if self.filtered_once:
+            print("Already filtered!")
+            return
+
+        pts = self.lod.full_pts
+        valid = np.ones(len(pts), dtype=bool)
+
+        # Remove NaN / inf
+        valid &= np.isfinite(pts).all(axis=1)
+
+        # Remove points where ANY x, y, or z > threshold
+        valid &= np.abs(pts).max(axis=1) < self.outlier_threshold
+
+        if not np.all(valid):
+            old_count = len(pts)
+            self.lod.full_pts = pts[valid]
+            self.lod.full_col = self.lod.current_col[valid]
+            self.original_colors = self.original_colors[valid]
+
+            # Rebuild LOD
+            self.lod.current_pts = self.lod.full_pts
+            self.lod.current_col = self.lod.full_col
+
+            new_count = len(self.lod.full_pts)
+            removed = old_count - new_count
+            print(f"Filtered outliers: {old_count} → {new_count} points (-{removed})")
+
+            # Re-center view
+            center = self.lod.full_pts.mean(axis=0)
+            radius = np.linalg.norm(self.lod.full_pts - center, axis=1).max()
+            self.lod_radius = radius
+            self.trackball.center = center
+            self.trackball.eye = center + np.array([1.2, 0.8, 1.2]) * radius * 3
+
+            # Update GPU
+            glBindBuffer(GL_ARRAY_BUFFER, self.vbo_pos)
+            glBufferData(GL_ARRAY_BUFFER, self.lod.full_pts.nbytes, self.lod.full_pts, GL_STATIC_DRAW)
+            self.upload_colors()
+
+        self.filtered_once = True
 
     def run(self):
         self.init_gl()
@@ -489,7 +698,10 @@ class PointCloudViewer:
                 self.save_annotations()
             if imgui.button("Export PCD", width=180):
                 self.export_labeled_pcd()
-
+            if imgui.button("Filter Outliers", width=180):
+                self.filter_outliers()
+                # if self.filtered_once:
+                #     imgui.text_colored((0.0, 1.0, 0.0, 1.0), "Outliers filtered!")
             imgui.text(f"Labeled: {len(self.annotations)}")
 
             imgui.end()

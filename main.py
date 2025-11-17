@@ -62,7 +62,8 @@ def main():
         class_colors=class_colors,
         undo_steps=undo_steps,
         unbrush_class=unbrush_class,
-        pcd_paths=pcd_paths
+        pcd_paths=pcd_paths,
+        config=config
     )
     viewer.run()
 

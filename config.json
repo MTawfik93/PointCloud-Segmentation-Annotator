@@ -6,5 +6,7 @@
   "class_names": ["Defect", "Long Defect", "Hole", "Scratsh", "Bump"],
   "class_colors": [[255, 0, 0],[0, 255, 0],[0, 0, 255],[255, 255, 0],[180, 180, 180]],
   "undo_steps": 1000,
-  "unbrush_class": 4
+  "unbrush_class": 4,
+  "outlier_threshold": 99998.0,
+  "filter_on_load": false
 }

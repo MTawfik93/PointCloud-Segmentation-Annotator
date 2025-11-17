@@ -4,7 +4,12 @@
 *.bin
 *.las
 *.laz
-
+*.png
+*.jpg
+*.jpeg
+*.tiff
+*.bmp
+*.zip
 # Annotation folders and files
 annotations/
 annotations/**
