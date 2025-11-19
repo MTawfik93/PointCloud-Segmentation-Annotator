@@ -11,10 +11,13 @@ Perfect for defect detection, quality control, and semantic segmentation labelin
 - **Undo/Redo** (Ctrl+Z / Ctrl+Y) – up to 10 steps
 - **Perfect brush centering** – no drift when zooming, orbiting or panning
 - **Instant GPU visualization** – millions of points at 60 FPS
+- **Auto-Refresh** – Refreshes automatically to find newly added files 
 - Auto-load & auto-save annotations (`.json`)
 - Export labeled point clouds (`.pcd` with class colors)
 - Fixed 1400×800 window – stable brush zero
 - Supports `.pcd`, `.ply`, intensity maps, and more
+- Renames already labelled files with a specific labeling defined in the Configs
+- Avoids opening already labeled files 
 
 # Installation
 
@@ -48,7 +51,7 @@ python main.py
 ```
 ## Project Structure
 ```bash
-text├── main.py              # Entry point
+Annotator├── main.py              # Entry point
 ├── Viewer.py            # Full OpenGL + ImGui viewer
 ├── config.json          # Classes, colors, undo steps
 ├── pointclouds/         # ← put your .pcd files here

@@ -31,28 +31,29 @@ def main():
     config = load_config()
     
     save_location = config['save_location']
-    class_names = config['class_names']
-    class_colors = [[c/255.0 for c in rgb] for rgb in config['class_colors']]
-    undo_steps = config['undo_steps']
+    class_names   = config['class_names']
+    class_colors  = [[c/255.0 for c in rgb] for rgb in config['class_colors']]
+    undo_steps    = config['undo_steps']
     unbrush_class = config['unbrush_class']
-    
+    pcd_folder    = config["folder_name"]
+
     print(f"Save location: {save_location}")
     print(f"Classes: {class_names}")
     print(f"Undo steps: {undo_steps}")
     
     file_name = config.get('file_name')
-    folder_name = config.get('folder_name')
+    #folder_name = config.get('folder_name')
     
     # Get list of PCD files
     if file_name:
-        pcd_paths = [os.path.join(folder_name or '', file_name)]
+        pcd_paths = [os.path.join(pcd_folder or '', file_name)]
     else:
         pcd_paths = sorted([
-            os.path.join(folder_name, f) for f in os.listdir(folder_name)
+            os.path.join(pcd_folder, f) for f in os.listdir(pcd_folder)
             if f.lower().endswith('.pcd')
         ])
         if not pcd_paths:
-            raise FileNotFoundError(f"No .pcd files in {folder_name}")
+            raise FileNotFoundError(f"No .pcd files in {pcd_folder}")
     
     print(f"Found {len(pcd_paths)} file(s)")
 
@@ -62,7 +63,7 @@ def main():
         class_colors=class_colors,
         undo_steps=undo_steps,
         unbrush_class=unbrush_class,
-        pcd_paths=pcd_paths,
+        pcd_folder=pcd_folder,
         config=config
     )
     viewer.run()

@@ -1,24 +1,19 @@
 # Viewer.py
+import numpy as np
 import glfw
-import zlib
+from pathlib import Path
 import lzf
 import struct
-import open3d as o3d
-from OpenGL.GL import *
-import numpy as np
-from pyrr import Matrix44, matrix44
-import imgui
-from imgui.integrations.glfw import GlfwRenderer
 from utilities import apply_viridis
 import json
 import os
+import imgui
+import time
+import open3d as o3d
+from OpenGL.GL import *
+from pyrr import Matrix44, matrix44
+from imgui.integrations.glfw import GlfwRenderer
 
-def try_import_open3d():
-    try:
-        import open3d as o3d
-        return o3d
-    except ImportError:
-        raise ImportError("open3d not installed → pip install open3d")
 
 class Trackball:
     def __init__(self, eye, center, up):
@@ -71,7 +66,7 @@ class LOD:
         self.current_col = self.full_col[idx]
 
 class PointCloudViewer:
-    def __init__(self, save_location, class_names, class_colors, undo_steps, unbrush_class, pcd_paths, config):
+    def __init__(self, save_location, class_names, class_colors, undo_steps, unbrush_class, pcd_folder, config):
         self.win = None
         self.width = 1400
         self.height = 800
@@ -88,14 +83,21 @@ class PointCloudViewer:
         self.imgui_io = None
         self.imgui_renderer = None
 
+        self.last_folder_check = 0.0
+        self.folder_mtime = 0.0        # Last known modification time of the folder
+        self.auto_refresh = True       # I can expose this in UI later if I want
+
         # Config
         self.save_location = save_location
         self.class_names = class_names
         self.class_colors = np.array(class_colors, dtype=np.float32)
         self.undo_steps = undo_steps
         self.unbrush_class = unbrush_class
-        self.pcd_paths = pcd_paths
+        self.pcd_folder = Path(pcd_folder)
+        self.pcd_paths = []
         self.current_file_idx = 0
+        self.current_filename = "No file loaded"
+        self.refresh_file_list()  # Initial scan
 
         # Annotation
         self.brush_active = False
@@ -114,6 +116,25 @@ class PointCloudViewer:
         self.outlier_threshold = config.get("outlier_threshold", 99998.0)
         self.filter_on_load = config.get("filter_on_load", False)
         self.filtered_once = False
+
+    def refresh_file_list(self):
+        if not self.pcd_folder.exists():
+            print(f"Folder not found: {self.pcd_folder}")
+            self.pcd_paths = []
+            return
+
+        # Supported extensions
+        exts = (".pcd", ".ply")
+        files = [f for f in self.pcd_folder.iterdir()
+                 if f.is_file() and f.suffix.lower() in exts]
+        files.sort()  # Consistent ordering
+
+        self.pcd_paths = [str(f) for f in files]
+        print(f"Scanned folder → found {len(self.pcd_paths)} PCD/PLY files")
+
+        # If current index is out of bounds after refresh, adjust
+        if self.current_file_idx >= len(self.pcd_paths):
+            self.current_file_idx = max(0, len(self.pcd_paths) - 1)
 
     def load_binary_compressed_pcd(self,filepath):
         """
@@ -226,7 +247,7 @@ class PointCloudViewer:
             colors: Nx3 array of RGB colors (0-1 float32 range)
         """
         try:
-            o3d = try_import_open3d()
+            # o3d = try_import_open3d()
             pc = o3d.io.read_point_cloud(path)
             
             if pc.is_empty():
@@ -407,7 +428,7 @@ class PointCloudViewer:
         base = os.path.basename(self.pcd_paths[self.current_file_idx])
         name = os.path.splitext(base)[0]
         out_path = os.path.join(self.save_location, f"{name}_labeled.pcd")
-        o3d = try_import_open3d()
+        # o3d = try_import_open3d()
         pc = o3d.geometry.PointCloud()
         pc.points = o3d.utility.Vector3dVector(self.lod.full_pts)
         colors = self.original_colors.copy()
@@ -459,8 +480,45 @@ class PointCloudViewer:
         glBufferData(GL_ARRAY_BUFFER, self.lod.current_col.nbytes, self.lod.current_col, GL_STATIC_DRAW)
 
     def load_file(self, idx):
+
+        # === AUTO-REFRESH LOGIC ===
+        if self.auto_refresh and self.pcd_folder.exists():
+            try:
+                current_mtime = self.pcd_folder.stat().st_mtime
+                if current_mtime != self.folder_mtime:
+                    # Folder content changed → rescan
+                    old_count = len(self.pcd_paths)
+                    old_idx = self.current_file_idx
+                    old_path = self.pcd_paths[old_idx] if old_count > 0 else None
+
+                    self.refresh_file_list()
+
+                    new_count = len(self.pcd_paths)
+                    print(f"Folder updated: {old_count} → {new_count} files")
+
+                    # Try to stay on the same file if it still exists
+                    if old_path and old_path in self.pcd_paths:
+                        self.current_file_idx = self.pcd_paths.index(old_path)
+                    else:
+                        self.current_file_idx = np.clip(old_idx, 0, new_count - 1 if new_count > 0 else 0)
+
+                    self.folder_mtime = current_mtime
+            except Exception as e:
+                print(f"Auto-refresh check failed: {e}")
+        # === LOADING ===
+        if not self.pcd_paths:
+            print("No PCD files found in folder!")
+            self.current_filename = "No files"
+            glfw.set_window_title(self.win, "Point Cloud Annotator — No files")
+            return
+        
         self.current_file_idx = np.clip(idx, 0, len(self.pcd_paths)-1)
         path = self.pcd_paths[self.current_file_idx]
+        self.current_filename = Path(path).name
+
+        # Update window title
+        glfw.set_window_title(self.win, f"Point Cloud Annotator — {self.current_filename} ({self.current_file_idx + 1}/{len(self.pcd_paths)})")
+        
         print(f"Loading: {path}")
         pts, cols = self.load_pointcloud(path)
         
@@ -673,7 +731,16 @@ class PointCloudViewer:
             imgui.begin("Tools", True,
                         imgui.WINDOW_NO_MOVE | imgui.WINDOW_NO_RESIZE | imgui.WINDOW_NO_TITLE_BAR)
 
-            imgui.text(f"File: {self.current_file_idx+1}/{len(self.pcd_paths)}")
+            imgui.text(f"File {self.current_file_idx + 1}/{len(self.pcd_paths)}")
+            if imgui.button("Refresh Now", width=180):
+                old_idx = self.current_file_idx
+                self.refresh_file_list()
+                self.load_file(old_idx)
+            changed, self.auto_refresh = imgui.checkbox("Auto-refresh folder", self.auto_refresh)
+            # if self.auto_refresh:
+            #     imgui.text_colored(str(0.6), str(1.0), str(0.6), str(1.0))
+
+            imgui.text_wrapped(self.current_filename)
             imgui.separator()
 
             changed, self.brush_active = imgui.checkbox("Brush Tool", self.brush_active)

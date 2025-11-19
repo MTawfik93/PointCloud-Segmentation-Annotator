@@ -47,9 +47,15 @@ Thumbs.db
 build/
 dist/
 *.egg-info/
+*.spec
+*.ico
 
 # Our large data folders (add more if you have them)
 pointclouds/
 data/
 dataset/
 raw/
+
+# Specific files
+ReadPCD.py
+VisPCD.py
