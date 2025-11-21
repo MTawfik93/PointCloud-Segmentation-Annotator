@@ -1,0 +1,1 @@
+pyinstaller --onedir --windowed --icon=tags.ico --add-data "utilities.py;." --hidden-import=OpenGL --hidden-import=OpenGL.GL --hidden-import=glfw --hidden-import=imgui --hidden-import=open3d --hidden-import=lzf --hidden-import=pyrr --collect-all imgui --collect-all open3d --collect-all glfw --name "PointCloudAnnotator" main.py

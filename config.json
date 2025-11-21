@@ -1,6 +1,6 @@
 {
   "file_name": null,
-  "folder_name": "E:/Tools/PCAnnotator/openGL Annotator",
+  "folder_name": "pointclouds",
   "save_location": "annotations",
   "num_classes": 5,
   "class_names": ["Defect", "Long Defect", "Hole", "Scratsh", "Bump"],

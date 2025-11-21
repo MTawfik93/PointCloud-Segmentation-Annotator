@@ -301,70 +301,243 @@ class PointCloudViewer:
             print("Detected standard PCD format, using Open3D loader...")
             return self.load_standard_pcd(path)
 
-    def init_gl(self):
-        if not glfw.init(): raise RuntimeError("GLFW init failed")
-        glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 3)
-        glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)
-        glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
-        glfw.window_hint(glfw.RESIZABLE, GL_FALSE)  # NO RESIZE
-        self.win = glfw.create_window(1400, 800, "Point Cloud Annotator", None, None)
-        glfw.make_context_current(self.win)
+    # def init_gl(self):
+    #     if not glfw.init(): raise RuntimeError("GLFW init failed")
+    #     glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 3)
+    #     glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)
+    #     glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
+    #     glfw.window_hint(glfw.RESIZABLE, GL_FALSE)  # NO RESIZE
+    #     self.win = glfw.create_window(1400, 800, "Point Cloud Annotator", None, None)
+    #     glfw.make_context_current(self.win)
 
+    #     imgui.create_context()
+    #     self.imgui_io = imgui.get_io()
+    #     self.imgui_io.ini_file_name = b""
+    #     self.imgui_renderer = GlfwRenderer(self.win)
+
+    #     vs = """
+    #     #version 330 core
+    #     layout(location=0) in vec3 pos;
+    #     layout(location=1) in vec3 col;
+    #     uniform mat4 mvp;
+    #     out vec3 vcol;
+    #     void main(){
+    #         gl_Position = mvp * vec4(pos,1.0);
+    #         gl_PointSize = 6.0;
+    #         vcol = col;
+    #     }
+    #     """
+    #     fs = """
+    #     #version 330 core
+    #     in vec3 vcol;
+    #     out vec4 frag;
+    #     void main(){
+    #         vec2 c = gl_PointCoord - 0.5;
+    #         if(dot(c,c)>0.25) discard;
+    #         frag = vec4(vcol,1.0);
+    #     }
+    #     """
+    #     def compile(src, typ):
+    #         s = glCreateShader(typ)
+    #         glShaderSource(s, src)
+    #         glCompileShader(s)
+    #         if not glGetShaderiv(s, GL_COMPILE_STATUS):
+    #             raise RuntimeError(glGetShaderInfoLog(s).decode())
+    #         return s
+    #     self.prog = glCreateProgram()
+    #     glAttachShader(self.prog, compile(vs, GL_VERTEX_SHADER))
+    #     glAttachShader(self.prog, compile(fs, GL_FRAGMENT_SHADER))
+    #     glLinkProgram(self.prog)
+
+    #     self.vao = glGenVertexArrays(1)
+    #     self.vbo_pos, self.vbo_col = glGenBuffers(2)
+    #     glBindVertexArray(self.vao)
+    #     glBindBuffer(GL_ARRAY_BUFFER, self.vbo_pos)
+    #     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, None)
+    #     glEnableVertexAttribArray(0)
+    #     glBindBuffer(GL_ARRAY_BUFFER, self.vbo_col)
+    #     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, None)
+    #     glEnableVertexAttribArray(1)
+    #     glBindVertexArray(0)
+
+    #     glUseProgram(self.prog)
+    #     glEnable(GL_PROGRAM_POINT_SIZE)
+    #     glEnable(GL_DEPTH_TEST)
+    #     glClearColor(0.05, 0.05, 0.1, 1)
+    def init_gl(self):
+        if not glfw.init():
+            raise RuntimeError("GLFW init failed")
+
+        # === SUPER SAFE GPU detection (works even when OpenGL is broken) ===
+        self.legacy_mode = True  # default = safe mode
+        try:
+            # Try to create a tiny hidden window with ANY OpenGL context
+            glfw.window_hint(glfw.VISIBLE, glfw.FALSE)
+            glfw.window_hint(glfw.CLIENT_API, glfw.OPENGL_API)
+            glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 2)
+            glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 1)
+            tmp = glfw.create_window(64, 64, "probe", None, None)
+            if tmp:
+                glfw.make_context_current(tmp)
+                renderer = glGetString(GL_RENDERER)
+                version = glGetString(GL_VERSION)
+                if renderer:
+                    renderer = renderer.decode('utf-8', errors='ignore').lower()
+                if version:
+                    version = version.decode('utf-8', errors='ignore')
+
+                print(f"Probe GPU: {renderer or 'unknown'} | GL {version or 'unknown'}")
+
+                # If we see a real GPU → try modern mode
+                if renderer and ("nvidia" in renderer or "amd" in renderer or "intel" in renderer or "radeon" in renderer):
+                    self.legacy_mode = False
+                    print("Modern GPU detected → using OpenGL 3.3")
+                else:
+                    print("Weak/software/ASpeed GPU → forcing legacy OpenGL 2.1")
+
+                glfw.make_context_current(None)
+                glfw.destroy_window(tmp)
+        except Exception as e:
+            print(f"GPU probe failed ({e}) → using safe legacy mode")
+
+        # === Now create the REAL window with correct hints ===
+        glfw.default_window_hints()  # reset all hints
+
+        if self.legacy_mode:
+            # Absolute minimum that works on ASpeed
+            glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 2)
+            glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 1)
+            glfw.window_hint(glfw.CLIENT_API, glfw.OPENGL_API)
+            glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_ANY_PROFILE)
+        else:
+            glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 3)
+            glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)
+            glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
+
+        # These are safe everywhere
+        glfw.window_hint(glfw.RESIZABLE, glfw.FALSE)
+        glfw.window_hint(glfw.SAMPLES, 0)           # Disable AA on weak GPUs
+        glfw.window_hint(glfw.DOUBLEBUFFER, glfw.TRUE)
+
+        # === Try multiple resolutions (in case 1400x800 fails) ===
+        sizes = [(1400, 800), (1280, 720), (1024, 768), (800, 600)]
+        self.win = None
+        for w, h in sizes:
+            print(f"Trying window size {w}x{h}...")
+            self.win = glfw.create_window(w, h, "Point Cloud Annotator", None, None)
+            if self.win:
+                self.width, self.height = w, h
+                print(f"Window created: {w}x{h}")
+                break
+
+        if not self.win:
+            raise RuntimeError("Failed to create GLFW window on any resolution!")
+
+        glfw.make_context_current(self.win)
+        glfw.swap_interval(1)  # VSync
+
+        # === ImGui + Shaders ===
         imgui.create_context()
         self.imgui_io = imgui.get_io()
         self.imgui_io.ini_file_name = b""
         self.imgui_renderer = GlfwRenderer(self.win)
 
-        vs = """
-        #version 330 core
-        layout(location=0) in vec3 pos;
-        layout(location=1) in vec3 col;
-        uniform mat4 mvp;
-        out vec3 vcol;
-        void main(){
-            gl_Position = mvp * vec4(pos,1.0);
-            gl_PointSize = 6.0;
-            vcol = col;
-        }
-        """
-        fs = """
-        #version 330 core
-        in vec3 vcol;
-        out vec4 frag;
-        void main(){
-            vec2 c = gl_PointCoord - 0.5;
-            if(dot(c,c)>0.25) discard;
-            frag = vec4(vcol,1.0);
-        }
-        """
+        self.compile_shaders()
+        self.setup_buffers()
+        glClearColor(0.05, 0.05, 0.1, 1)
+        print("OpenGL initialized successfully!")
+
+    def setup_buffers(self):
+        self.vao = glGenVertexArrays(1)
+        self.vbo_pos, self.vbo_col = glGenBuffers(2)
+
+        # In legacy mode, some drivers crash on VAOs → fallback
+        if self.legacy_mode:
+            glBindVertexArray(0)
+        else:
+            glBindVertexArray(self.vao)
+
+        glBindBuffer(GL_ARRAY_BUFFER, self.vbo_pos)
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, None)
+        glEnableVertexAttribArray(0)
+
+        glBindBuffer(GL_ARRAY_BUFFER, self.vbo_col)
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, None)
+        glEnableVertexAttribArray(1)
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+        if not self.legacy_mode:
+            glBindVertexArray(0)
+
+    def compile_shaders(self):
+        if self.legacy_mode:
+            vs = """
+            #version 120
+            attribute vec3 pos;
+            attribute vec3 col;
+            uniform mat4 mvp;
+            varying vec3 vcol;
+            void main(){
+                gl_Position = mvp * vec4(pos,1.0);
+                gl_PointSize = 6.0;
+                vcol = col;
+            }
+            """
+            fs = """
+            #version 120
+            varying vec3 vcol;
+            void main(){
+                vec2 c = gl_PointCoord - vec2(0.5);
+                if(dot(c,c) > 0.25) discard;
+                gl_FragColor = vec4(vcol, 1.0);
+            }
+            """
+        else:
+            vs = """
+            #version 330 core
+            layout(location=0) in vec3 pos;
+            layout(location=1) in vec3 col;
+            uniform mat4 mvp;
+            out vec3 vcol;
+            void main(){
+                gl_Position = mvp * vec4(pos,1.0);
+                gl_PointSize = 6.0;
+                vcol = col;
+            }
+            """
+            fs = """
+            #version 330 core
+            in vec3 vcol;
+            out vec4 frag;
+            void main(){
+                vec2 c = gl_PointCoord - vec2(0.5);
+                if(dot(c,c) > 0.25) discard;
+                frag = vec4(vcol, 1.0);
+            }
+            """
+
         def compile(src, typ):
             s = glCreateShader(typ)
             glShaderSource(s, src)
             glCompileShader(s)
             if not glGetShaderiv(s, GL_COMPILE_STATUS):
-                raise RuntimeError(glGetShaderInfoLog(s).decode())
+                log = glGetShaderInfoLog(s).decode('utf-8', errors='ignore')
+                raise RuntimeError(f"Shader compile error:\n{log}")
             return s
+
         self.prog = glCreateProgram()
         glAttachShader(self.prog, compile(vs, GL_VERTEX_SHADER))
         glAttachShader(self.prog, compile(fs, GL_FRAGMENT_SHADER))
         glLinkProgram(self.prog)
 
-        self.vao = glGenVertexArrays(1)
-        self.vbo_pos, self.vbo_col = glGenBuffers(2)
-        glBindVertexArray(self.vao)
-        glBindBuffer(GL_ARRAY_BUFFER, self.vbo_pos)
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, None)
-        glEnableVertexAttribArray(0)
-        glBindBuffer(GL_ARRAY_BUFFER, self.vbo_col)
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, None)
-        glEnableVertexAttribArray(1)
-        glBindVertexArray(0)
+        if not glGetProgramiv(self.prog, GL_LINK_STATUS):
+            log = glGetProgramInfoLog(self.prog).decode('utf-8', errors='ignore')
+            raise RuntimeError(f"Link error:\n{log}")
 
         glUseProgram(self.prog)
         glEnable(GL_PROGRAM_POINT_SIZE)
         glEnable(GL_DEPTH_TEST)
-        glClearColor(0.05, 0.05, 0.1, 1)
-
+ 
     def get_ray(self, mx, my):
         # Get current window size
         width, height = glfw.get_window_size(self.win)
@@ -793,7 +966,7 @@ class PointCloudViewer:
             glUniformMatrix4fv(glGetUniformLocation(self.prog, "mvp"), 1, GL_FALSE, mvp)
 
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-            glBindVertexArray(self.vao)
+            glBindVertexArray(self.vao if not self.legacy_mode else 0)
             glDrawArrays(GL_POINTS, 0, self.lod.current_pts.shape[0])
             glBindVertexArray(0)
 
