@@ -117,6 +117,11 @@ class PointCloudViewer:
         self.filter_on_load = config.get("filter_on_load", False)
         self.filtered_once = False
 
+        # Point size slider
+        self.point_size = 6.0          # ← add this (starting value)
+        self.point_size_min = 1.0
+        self.point_size_max = 100.0
+
     def refresh_file_list(self):
         if not self.pcd_folder.exists():
             print(f"Folder not found: {self.pcd_folder}")
@@ -209,7 +214,7 @@ class PointCloudViewer:
         offset_data = np.frombuffer(binary_data[offset_pos:offset_pos+field_sizes['offset']], dtype='<u2')
         
         # Stack into Nx3 array
-        points = np.stack([x_data, y_data, z_data], axis=1)
+        points = np.stack([x_data, y_data, z_data*-1], axis=1)
         
         # Remove NaN and outlier points
         valid_mask = ~np.isnan(points).any(axis=1) & ~np.isnan(intensity)
@@ -494,17 +499,19 @@ class PointCloudViewer:
             """
         else:
             vs = """
-            #version 330 core
-            layout(location=0) in vec3 pos;
-            layout(location=1) in vec3 col;
-            uniform mat4 mvp;
-            out vec3 vcol;
-            void main(){
-                gl_Position = mvp * vec4(pos,1.0);
-                gl_PointSize = 6.0;
-                vcol = col;
-            }
-            """
+                #version 330 core
+                layout(location=0) in vec3 pos;
+                layout(location=1) in vec3 col;
+                uniform mat4 mvp;
+                uniform float u_point_size;     
+                out vec3 vcol;
+
+                void main(){
+                    gl_Position = mvp * vec4(pos,1.0);
+                    gl_PointSize = u_point_size;    
+                    vcol = col;
+                }
+                """
             fs = """
             #version 330 core
             in vec3 vcol;
@@ -535,6 +542,7 @@ class PointCloudViewer:
             raise RuntimeError(f"Link error:\n{log}")
 
         glUseProgram(self.prog)
+        self.u_point_size_loc = glGetUniformLocation(self.prog, "u_point_size")
         glEnable(GL_PROGRAM_POINT_SIZE)
         glEnable(GL_DEPTH_TEST)
  
@@ -786,10 +794,65 @@ class PointCloudViewer:
 
         self.filtered_once = True
 
+    def set_top_view(self):
+        if self.trackball is None or self.lod is None:
+            return
+        center = self.trackball.center
+        dist = self.lod_radius * 3  # Consistent distance based on point cloud radius
+        self.trackball.eye = center + np.array([0, dist, 0]).astype(np.float32)
+        self.trackball.up = np.array([0, 0, -1]).astype(np.float32)  # Orient with positive Z downward
+        self.trackball.zoom = 1.0
+        self.translation = np.zeros(3, dtype=np.float32)
+        self.update_projection()  # Refresh projection after view change
+
+    def set_front_view(self):
+        if self.trackball is None or self.lod is None:
+            return
+        center = self.trackball.center
+        dist = self.lod_radius * 3
+        self.trackball.eye = center + np.array([0, 0, dist]).astype(np.float32)
+        self.trackball.up = np.array([0, 1, 0]).astype(np.float32)
+        self.trackball.zoom = 1.0
+        self.translation = np.zeros(3, dtype=np.float32)
+        self.update_projection()
+
+    def set_side_view(self):
+        if self.trackball is None or self.lod is None:
+            return
+        center = self.trackball.center
+        dist = self.lod_radius * 3
+        self.trackball.eye = center + np.array([dist, 0, 0]).astype(np.float32)
+        self.trackball.up = np.array([0, 1, 0]).astype(np.float32)
+        self.trackball.zoom = 1.0
+        self.translation = np.zeros(3, dtype=np.float32)
+        self.update_projection()
+
+    def set_home_view(self):
+        if self.trackball is None or self.lod is None:
+            return
+            
+        center = self.trackball.center
+        radius = self.lod_radius
+        
+        # Classic isometric direction: equal contribution from x,y,z
+        # Using (1,1,1) direction - most common "home" isometric
+        direction = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+        direction /= np.linalg.norm(direction)  # normalize
+        
+        # Distance — usually a bit farther than side views for better overview
+        dist = radius * 3.8  # ← tune this: 3.5–4.2 usually looks good
+        
+        self.trackball.eye = center + direction * dist
+        self.trackball.up = np.array([0.0, 1.0, 0.0], dtype=np.float32)  # world up = Y
+        
+        self.trackball.zoom = 1.0
+        self.translation = np.zeros(3, dtype=np.float32)  # reset any panning
+        
+        self.update_projection()
+
     def run(self):
         self.init_gl()
         self.load_file(0)
-
         def mouse_button(window, button, action, mods):
             if imgui.get_io().want_capture_mouse: return
             x, y = glfw.get_cursor_pos(window)
@@ -888,6 +951,20 @@ class PointCloudViewer:
                 elif key == glfw.KEY_RIGHT:
                     self.load_file(self.current_file_idx + 1)
 
+                elif key == glfw.KEY_T:           # T → Top
+                    self.set_top_view()
+                elif key == glfw.KEY_F:           # F → Front
+                    self.set_front_view()
+                elif key == glfw.KEY_S:           # S → Side (right side usually)
+                    self.set_side_view()
+                elif key == glfw.KEY_H:           # H → Home/Isometric
+                    self.set_home_view()
+
+                elif key == glfw.KEY_KP_ADD:    # +
+                    self.point_size = min(self.point_size_max, self.point_size + 2)
+                elif key == glfw.KEY_KP_SUBTRACT:   # -
+                    self.point_size = max(self.point_size_min, self.point_size - 2)
+
         glfw.set_mouse_button_callback(self.win, mouse_button)
         glfw.set_cursor_pos_callback(self.win, cursor_pos)
         glfw.set_scroll_callback(self.win, scroll)
@@ -897,7 +974,13 @@ class PointCloudViewer:
             glfw.poll_events()
             self.imgui_renderer.process_inputs()
             imgui.new_frame()
+            glUseProgram(self.prog)
+            glUniform1f(self.u_point_size_loc, self.point_size)
 
+            # Clear + draw
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+            glBindVertexArray(self.vao if not self.legacy_mode else 0)
+            glDrawArrays(GL_POINTS, 0, self.lod.current_pts.shape[0])
             # --- Sidebar ---
             imgui.set_next_window_position(0, 0)
             imgui.set_next_window_size(200, self.height)
@@ -943,7 +1026,28 @@ class PointCloudViewer:
                 # if self.filtered_once:
                 #     imgui.text_colored((0.0, 1.0, 0.0, 1.0), "Outliers filtered!")
             imgui.text(f"Labeled: {len(self.annotations)}")
-
+            imgui.separator()
+            imgui.text("Point of View")
+            if imgui.button("Top View (T)", width=180):
+                self.set_top_view()
+            if imgui.button("Front View (F)", width=180):
+                self.set_front_view()
+            if imgui.button("Side View (S)", width=180):
+                self.set_side_view()
+            if imgui.button("Home / Isometric (H)", width=180):
+                self.set_home_view()
+            imgui.separator()
+            # changed, self.point_size = imgui.slider_float(
+            #     "Point Size",
+            #     self.point_size,
+            #     self.point_size_min,
+            #     self.point_size_max,
+            #     format="%.0f"           # show as integer
+            # )
+            imgui.push_item_width(180)
+            imgui.text("Point size (+/-)")
+            changed, self.point_size = imgui.slider_float("", self.point_size, 1.0, 100.0, "%.0f")
+            imgui.pop_item_width()
             imgui.end()
 
             # --- 3D Input ---
