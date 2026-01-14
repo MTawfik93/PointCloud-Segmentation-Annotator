@@ -2,6 +2,7 @@
   "file_name": null,
   "folder_name": "pointclouds",
   "save_location": "annotations",
+  "processed_folder": "processed",
   "num_classes": 5,
   "class_names": ["Defect", "Long Defect", "Crack", "Scratch", "Hole", "Bump"],
   "class_colors": [[255, 0, 0],[0, 255, 0],[0, 0, 255],[255, 255, 0],[255, 128, 0],[180, 180, 180]],

@@ -22,7 +22,8 @@ def load_config(config_path: str = "config.json"):
     for key in required:
         if key not in config:
             raise KeyError(f"Missing required config key: '{key}'")
-    
+        
+    config.setdefault("processed_folder", "processed")
     os.makedirs(config['save_location'], exist_ok=True)
     
     return config
@@ -31,6 +32,7 @@ def main():
     config = load_config()
     
     save_location = config['save_location']
+    processed_folder = config['processed_folder']
     class_names   = config['class_names']
     class_colors  = [[c/255.0 for c in rgb] for rgb in config['class_colors']]
     undo_steps    = config['undo_steps']
@@ -40,6 +42,7 @@ def main():
     print(f"Save location: {save_location}")
     print(f"Classes: {class_names}")
     print(f"Undo steps: {undo_steps}")
+    print(f"Processed folder: {processed_folder}")
     
     file_name = config.get('file_name')
     #folder_name = config.get('folder_name')

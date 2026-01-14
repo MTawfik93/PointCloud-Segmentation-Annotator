@@ -94,6 +94,8 @@ class PointCloudViewer:
         self.undo_steps = undo_steps
         self.unbrush_class = unbrush_class
         self.pcd_folder = Path(pcd_folder)
+        self.processed_dir = self.pcd_folder / config["processed_folder"]
+        self.processed_dir.mkdir(parents=True, exist_ok=True)
         self.pcd_paths = []
         self.current_file_idx = 0
         self.current_filename = "No file loaded"
@@ -369,6 +371,57 @@ class PointCloudViewer:
     #     glEnable(GL_PROGRAM_POINT_SIZE)
     #     glEnable(GL_DEPTH_TEST)
     #     glClearColor(0.05, 0.05, 0.1, 1)
+    def mark_as_processed_and_move(self):
+        """
+        Only moves the file — does NOT rename again.
+        Assumes rename already happened during save.
+        """
+        if not self.pcd_paths:
+            print("No file loaded")
+            return
+
+        current_path = Path(self.pcd_paths[self.current_file_idx])
+
+        # Already in processed folder?
+        if current_path.parent.resolve() == self.processed_dir.resolve():
+            print("File is already in processed folder — nothing to do")
+            return
+
+        # Optional: extra safety — check prefix too
+        if current_path.stem.startswith(("A_", "ann_", "done_")):
+            print("File appears already processed (prefix found)")
+        else:
+            print("Warning: file has no processed prefix — moving anyway")
+
+        try:
+            final_path = self.processed_dir / current_path.name
+            current_path.rename(final_path)
+            print(f"Moved → {self.processed_dir / current_path.name}")
+
+            # Update viewer state
+            self.pcd_paths[self.current_file_idx] = str(final_path)
+            self.current_filename = final_path.name
+            glfw.set_window_title(
+                self.win,
+                f"Point Cloud Annotator — {self.current_filename} "
+                f"({self.current_file_idx + 1}/{len(self.pcd_paths)})"
+            )
+
+            # Auto advance to next file
+            next_idx = self.current_file_idx + 1
+            if next_idx < len(self.pcd_paths):
+                self.load_file(next_idx)
+            else:
+                self.refresh_file_list()
+                if self.pcd_paths:
+                    self.load_file(0)
+                else:
+                    self.current_filename = "No files left"
+                    glfw.set_window_title(self.win, "Point Cloud Annotator — No files")
+
+        except Exception as e:
+            print(f"Move failed: {e}")
+
     def init_gl(self):
         if not glfw.init():
             raise RuntimeError("GLFW init failed")
@@ -594,16 +647,55 @@ class PointCloudViewer:
         self.lod.current_col = colors
 
     def save_annotations(self):
-        base = os.path.basename(self.pcd_paths[self.current_file_idx])
-        name = os.path.splitext(base)[0]
-        ann_path = os.path.join(self.save_location, f"{name}.json")
-        data = {
-            "pcd": self.pcd_paths[self.current_file_idx],
-            "annotations": {str(i): int(c) for i, c in self.annotations.items()}
-        }
+        if not self.pcd_paths:
+            print("No file loaded — nothing to save")
+            return
+
+        current_path = Path(self.pcd_paths[self.current_file_idx])
+        base = current_path.stem
+        ext = current_path.suffix
+        name = base  # without extension
+
+        # Skip rename if already has our prefix
+        processed_prefixes = ("A_", "ann_", "done_")  # add more if needed
+        already_marked = any(base.startswith(p) for p in processed_prefixes)
+
+        if not already_marked:
+            new_name = f"A_{current_path.name}"
+            new_path = current_path.parent / new_name
+            
+            counter = 1
+            while new_path.exists():
+                new_name = f"A{counter}_{current_path.name}"
+                new_path = current_path.parent / new_name
+                counter += 1
+
+            try:
+                current_path.rename(new_path)
+                print(f"Renamed original → {new_name}")
+                
+                # Update viewer state
+                self.pcd_paths[self.current_file_idx] = str(new_path)
+                self.current_filename = new_path.name
+                glfw.set_window_title(
+                    self.win,
+                    f"Point Cloud Annotator — {self.current_filename} "
+                    f"({self.current_file_idx + 1}/{len(self.pcd_paths)})"
+                )
+            except Exception as e:
+                print(f"Rename failed: {e}")
+                # Continue to save JSON even if rename fails
+        else:
+            pass
+            #print("File already marked (prefix detected) — skipping rename")
+
+        # Always save the JSON (using the possibly renamed base name)
+        ann_name = f"{name}.json"  # still use original name without A_ for JSON
+        ann_path = os.path.join(self.save_location, ann_name)
+        data = {int(k): int(v) for k, v in self.annotations.items()}
         with open(ann_path, 'w') as f:
             json.dump(data, f, indent=2)
-        print(f"Saved: {ann_path}")
+        print(f"Saved annotations: {ann_path}")
 
     def export_labeled_pcd(self):
         base = os.path.basename(self.pcd_paths[self.current_file_idx])
@@ -1021,6 +1113,12 @@ class PointCloudViewer:
                 self.save_annotations()
             if imgui.button("Export PCD", width=180):
                 self.export_labeled_pcd()
+            imgui.push_style_color(imgui.COLOR_BUTTON, 0.1, 0.7, 0.1, 1.0)
+            imgui.push_style_color(imgui.COLOR_BUTTON_HOVERED, 0.2, 0.9, 0.2, 1.0)
+            if imgui.button("Move", width=180):
+                self.save_annotations()
+                self.mark_as_processed_and_move()
+            imgui.pop_style_color(2)
             if imgui.button("Filter Outliers", width=180):
                 self.filter_outliers()
                 # if self.filtered_once:
