@@ -4,7 +4,7 @@ import glfw
 from pathlib import Path
 import lzf
 import struct
-from utilities import apply_viridis
+from utilities import apply_heatmap
 import json
 import os
 import imgui
@@ -93,6 +93,7 @@ class PointCloudViewer:
         self.class_colors = np.array(class_colors, dtype=np.float32)
         self.undo_steps = undo_steps
         self.unbrush_class = unbrush_class
+        self.base_colors = None
         self.pcd_folder = Path(pcd_folder)
         self.processed_dir = self.pcd_folder / config["processed_folder"]
         self.processed_dir.mkdir(parents=True, exist_ok=True)
@@ -123,6 +124,9 @@ class PointCloudViewer:
         self.point_size = 6.0          # ← add this (starting value)
         self.point_size_min = 1.0
         self.point_size_max = 100.0
+        self.heatmap_mode = False               # toggle state
+        self.intensity_values = None            # will store normalized [0,1] intensity
+        self.heatmap_colormap = "plasma"       # or "magma", "plasma", "inferno", "jet", ...
 
     def refresh_file_list(self):
         if not self.pcd_folder.exists():
@@ -234,16 +238,37 @@ class PointCloudViewer:
         # print(f"Mean: {intensity.mean():.2f}, Std: {intensity.std():.2f}")
         # print(f"Data type: {intensity.dtype}")
         # print(f"Sample values: {intensity[:10]}")
+
+
         # Convert intensity to grayscale colors (0-255 range)
-        if intensity.max() > 0:
-            print("Converting intensity to grayscale colors")
-            colors = (intensity.astype(np.float64) / intensity.max() * 255.0).astype(np.uint8)
+        # if intensity.max() > 0:
+        #     print("Converting intensity to grayscale colors")
+        #     colors = (intensity.astype(np.float64) / intensity.max() * 255.0).astype(np.uint8)
+        # else:
+        #     colors = intensity.astype(np.uint8) / 255.0
+        
+        # colors = np.stack([colors, colors, colors], axis=1)
+        
+        # return points, colors
+        if intensity.size > 0 and intensity.max() > intensity.min():
+                self.intensity_values = (intensity - intensity.min()) / (intensity.max() - intensity.min() + 1e-6)
         else:
-            colors = intensity.astype(np.uint8) / 255.0
-        
-        colors = np.stack([colors, colors, colors], axis=1)
-        
-        return points, colors
+            self.intensity_values = np.zeros(len(points), dtype=np.float32)
+
+        # ── Create grayscale colors (this is the "original" look) ────────
+        if intensity.max() > 0:
+            gray = (intensity.astype(np.float32) / intensity.max() * 255).astype(np.uint8)
+        else:
+            gray = np.full(len(points), 180, dtype=np.uint8)  # fallback medium gray
+
+        colors_gray = np.stack([gray, gray, gray], axis=1).astype(np.float32) / 255.0
+
+        # Important: original = grayscale
+        self.original_colors = colors_gray.copy()
+        self.base_colors = self.original_colors.copy()
+        # Return grayscale as initial display colors
+        return points, colors_gray
+
 
     def load_standard_pcd(self, path: str):
         """
@@ -269,7 +294,8 @@ class PointCloudViewer:
                 # Fallback: medium gray
                 colors = np.ones((len(points), 3), dtype=np.float32) * 0.7
                 print(f"Open3D loaded {len(points)} points (no color data, using gray)")
-            
+            self.original_colors = colors.copy()
+            self.base_colors = self.original_colors.copy()
             return points, colors
             
         except Exception as e:
@@ -640,12 +666,19 @@ class PointCloudViewer:
         mask = (proj > 0) & (lateral_dist < self.brush_radius)
         return np.where(mask)[0]
 
+    # def update_colors(self):
+    #     colors = self.original_colors.copy()
+    #     for idx, cls in self.annotations.items():
+    #         colors[idx] = self.class_colors[cls]
+    #     self.lod.current_col = colors
     def update_colors(self):
-        colors = self.original_colors.copy()
+        # Assuming this method exists but was truncated; if not, add it as a new def.
+        # It should copy from base_colors and overlay annotations.
+        self.lod.current_col = self.base_colors.copy()
         for idx, cls in self.annotations.items():
-            colors[idx] = self.class_colors[cls]
-        self.lod.current_col = colors
-
+            if cls == self.unbrush_class:
+                continue  # Skip if unbrushed, or handle as needed
+            self.lod.current_col[idx] = self.class_colors[cls]
     def save_annotations(self):
         if not self.pcd_paths:
             print("No file loaded — nothing to save")
@@ -794,7 +827,13 @@ class PointCloudViewer:
         
         print(f"Loading: {path}")
         pts, cols = self.load_pointcloud(path)
-        
+
+        # For standard PCDs without intensity → fake it or disable heatmap
+        if self.intensity_values is None:
+            # Option A: disable heatmap button later
+            # Option B: fake intensity from e.g. z-coordinate
+            self.intensity_values = (pts[:, 2] - pts[:, 2].min()) / (pts[:, 2].max() - pts[:, 2].min() + 1e-8)
+
         # Track if this is binary compressed format
         is_binary_compressed = cols.dtype == np.uint8
         
@@ -807,11 +846,10 @@ class PointCloudViewer:
             # Standard PCD: check if colors are grayscale (intensity data)
             is_intensity = cols.shape[1] == 3 and np.allclose(cols[:,0], cols[:,1]) and np.allclose(cols[:,1], cols[:,2])
             
-            if is_intensity:
-                # Apply viridis colormap to intensity values
-                cols = apply_viridis(cols[:, 0])
-                print("Applied viridis colormap to intensity data")
-        
+            if is_intensity and self.heatmap_mode:
+                cols = apply_heatmap(cols[:, 0], self.heatmap_colormap)
+                print("Applied heatmap to intensity data")
+
         self.lod = LOD(pts, cols)
         self.original_colors = cols.copy()
         center = pts.mean(axis=0)
@@ -941,6 +979,46 @@ class PointCloudViewer:
         self.translation = np.zeros(3, dtype=np.float32)  # reset any panning
         
         self.update_projection()
+
+    # def toggle_heatmap(self):
+    #     self.heatmap_mode = not self.heatmap_mode
+        
+    #     if self.intensity_values is None or len(self.intensity_values) == 0:
+    #         print("No intensity data available → heatmap disabled")
+    #         self.heatmap_mode = False
+    #         return
+
+    #     if self.heatmap_mode:
+    #         # Apply heatmap colors
+    #         heatmap_colors = apply_heatmap(self.intensity_values, self.heatmap_colormap)
+    #         self.lod.current_col = heatmap_colors.astype(np.float32)
+    #         print("Heatmap mode ON")
+    #     else:
+    #         # Restore original
+    #         self.lod.current_col = self.original_colors.copy()
+    #         print("Heatmap mode OFF")
+
+    #     self.upload_colors()
+    def toggle_heatmap(self):
+        self.heatmap_mode = not self.heatmap_mode
+        
+        if self.intensity_values is None or len(self.intensity_values) == 0:
+            print("No intensity data available → heatmap disabled")
+            self.heatmap_mode = False
+            return
+
+        if self.heatmap_mode:
+            # Set base to heatmap
+            self.base_colors = apply_heatmap(self.intensity_values, self.heatmap_colormap).astype(np.float32)
+            print("Heatmap mode ON")
+        else:
+            # Set base to original grayscale
+            self.base_colors = self.original_colors.copy()
+            print("Heatmap mode OFF")
+        
+        # Reapply annotations on top of the new base
+        self.update_colors()
+        self.upload_colors()
 
     def run(self):
         self.init_gl()
@@ -1146,6 +1224,15 @@ class PointCloudViewer:
             imgui.text("Point size (+/-)")
             changed, self.point_size = imgui.slider_float("", self.point_size, 1.0, 100.0, "%.0f")
             imgui.pop_item_width()
+            imgui.separator()
+            if imgui.button("Toggle Heatmap Preview", width=180):
+                self.toggle_heatmap()
+
+            if self.heatmap_mode:
+                imgui.text_colored("HEATMAP ACTIVE", 0.0, 1.0, 0.3, 1.0)
+            else:
+                imgui.text("Heatmap OFF")
+
             imgui.end()
 
             # --- 3D Input ---
