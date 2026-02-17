@@ -80,6 +80,18 @@ def apply_heatmap(intensity: np.ndarray, colormap_name: str = "viridis") -> np.n
             [0.250, 0.000, 0.000],
             [0.000, 0.000, 0.000]
         ], dtype=np.float32),
+        "depth": np.array([
+            [1.0, 0.0, 0.0],    # red for low depth
+            [0.8, 0.2, 0.0],
+            [0.6, 0.4, 0.0],
+            [0.4, 0.6, 0.0],
+            [0.2, 0.8, 0.0],
+            [0.0, 1.0, 0.0],    # green for high
+            [0.0, 0.8, 0.2],
+            [0.0, 0.6, 0.4],
+            [0.0, 0.4, 0.6],
+            [0.0, 0.0, 1.0]     # blue for very high
+        ], dtype=np.float32),
     }
     
     cmap = colormaps.get(colormap_name.lower(), colormaps["viridis"])

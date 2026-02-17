@@ -126,8 +126,8 @@ class PointCloudViewer:
         self.point_size_max = 100.0
         self.heatmap_mode = False               # toggle state
         self.intensity_values = None            # will store normalized [0,1] intensity
-        self.heatmap_colormap = "plasma"       # or "magma", "plasma", "inferno", "jet", ...
-
+        self.heatmap_colormap = "depth"       # or "depth", "magma", "plasma", "inferno", "jet", ...
+        self.depth_values = None
     def refresh_file_list(self):
         if not self.pcd_folder.exists():
             print(f"Folder not found: {self.pcd_folder}")
@@ -220,7 +220,7 @@ class PointCloudViewer:
         offset_data = np.frombuffer(binary_data[offset_pos:offset_pos+field_sizes['offset']], dtype='<u2')
         
         # Stack into Nx3 array
-        points = np.stack([x_data, y_data, z_data*-1], axis=1)
+        points = np.stack([x_data, y_data*-1, z_data], axis=-1)
         
         # Remove NaN and outlier points
         valid_mask = ~np.isnan(points).any(axis=1) & ~np.isnan(intensity)
@@ -231,7 +231,9 @@ class PointCloudViewer:
         combined_mask = valid_mask & outlier_mask
         points = points[combined_mask]
         intensity = intensity[combined_mask]
+        self.depth_values = points[:, 1] # Y as depth (note: z*-1 in stacking)
         
+        print(f"Height (Y) range: {self.depth_values.min():.2f} → {self.depth_values.max():.2f} m")
         print(f"After filtering: {len(points)} points remain")
         # print(f"\nIntensity statistics:")
         # print(f"Min: {intensity.min()}, Max: {intensity.max()}")
@@ -294,6 +296,7 @@ class PointCloudViewer:
                 # Fallback: medium gray
                 colors = np.ones((len(points), 3), dtype=np.float32) * 0.7
                 print(f"Open3D loaded {len(points)} points (no color data, using gray)")
+            self.depth_values = points[:, 2] # Z as depth
             self.original_colors = colors.copy()
             self.base_colors = self.original_colors.copy()
             return points, colors
@@ -1006,10 +1009,36 @@ class PointCloudViewer:
             print("No intensity data available → heatmap disabled")
             self.heatmap_mode = False
             return
+        if self.heatmap_colormap == "depth" and (self.depth_values is None or len(self.depth_values) == 0):
+            print("No depth data available → heatmap disabled")
+            self.heatmap_mode = False
+            return
 
         if self.heatmap_mode:
-            # Set base to heatmap
-            self.base_colors = apply_heatmap(self.intensity_values, self.heatmap_colormap).astype(np.float32)
+            # Compute normalized depths, handling outliers with percentiles
+            depths = self.depth_values
+            if len(depths) == 0:
+                return
+            
+            # Use percentiles to define main cluster range (excludes outliers)
+            percent_low = 1.0   # Adjust if needed (e.g., 0.5 for stricter)
+            percent_high = 99.0
+            min_d = np.percentile(depths, percent_low)
+            max_d = np.percentile(depths, percent_high)
+            
+            if max_d == min_d:
+                norm_depths = np.zeros_like(depths)
+            else:
+                # Normalize with clamping for outliers
+                norm_depths = np.clip((depths - min_d) / (max_d - min_d), 0.0, 1.0)
+
+            if self.heatmap_colormap == "depth":
+                # Apply heatmap based on normalized depths
+                self.base_colors = apply_heatmap(norm_depths, self.heatmap_colormap).astype(np.float32)
+            else:
+                # Set base to heatmap
+                self.base_colors = apply_heatmap(self.intensity_values, self.heatmap_colormap).astype(np.float32)
+
             print("Heatmap mode ON")
         else:
             # Set base to original grayscale
